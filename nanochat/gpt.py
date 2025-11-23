@@ -73,6 +73,12 @@ class CausalSelfAttention(nn.Module):
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         cos, sin = cos_sin
+        # --- FIX: Type matching for DirectML ---
+        # Ensure cos/sin match the dtype of q/k (likely float16 or float32)
+        if cos.dtype != q.dtype:
+            cos = cos.to(q.dtype)
+            sin = sin.to(q.dtype)
+
         q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin) # QK rotary embedding
         q, k = norm(q), norm(k) # QK norm
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2) # make head be batch dim, i.e. (B, T, H, D) -> (B, H, T, D)
@@ -84,15 +90,17 @@ class CausalSelfAttention(nn.Module):
         Tk = k.size(2) # number of keys/values in total (in the cache + current forward pass)
 
         # Attention: queries attend to keys/values autoregressively. A few cases to handle:
-        enable_gqa = self.n_head != self.n_kv_head # Group Query Attention (GQA): duplicate key/value heads to match query heads if desired
+        # enable_gqa = self.n_head != self.n_kv_head # Removed: not supported by standard SDPA yet
+
+        # --- FIX: Removed unsupported 'enable_gqa' argument ---
         if kv_cache is None or Tq == Tk:
             # During training (no KV cache), attend as usual with causal attention
             # And even if there is KV cache, we can still use this simple version when Tq == Tk
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True, enable_gqa=enable_gqa)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         elif Tq == 1:
             # During inference but with a single query in this forward pass:
             # The query has to attend to all the keys/values in the cache
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
+            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
         else:
             # During inference AND we have a chunk of queries in this forward pass:
             # First, each query attends to all the cached keys/values (i.e. full prefix)
@@ -102,7 +110,7 @@ class CausalSelfAttention(nn.Module):
                 attn_mask[:, :prefix_len] = True
             # Then, causal attention within this chunk
             attn_mask[:, prefix_len:] = torch.tril(torch.ones((Tq, Tq), dtype=torch.bool, device=q.device))
-            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, enable_gqa=enable_gqa)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
 
         # Re-assemble the heads side by side and project back to residual stream
         y = y.transpose(1, 2).contiguous().view(B, T, -1)
@@ -166,7 +174,10 @@ class GPT(nn.Module):
         head_dim = self.config.n_embd // self.config.n_head
         cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         self.cos, self.sin = cos, sin
-        # Cast the embeddings from fp32 to bf16: optim can tolerate it and it saves memory: both in the model and the activations
+
+        # --- FIX: BFloat16 incompatibility with DirectML ---
+        # Only convert wte to bfloat16 if we are strictly on CUDA.
+        # DML/CPU should stay fp32 (autocast will handle fp16)
         if self.transformer.wte.weight.device.type == "cuda":
             self.transformer.wte.to(dtype=torch.bfloat16)
 
@@ -195,7 +206,16 @@ class GPT(nn.Module):
         # calculate the rotation frequencies at each (time, channel) pair
         freqs = torch.outer(t, inv_freq)
         cos, sin = freqs.cos(), freqs.sin()
-        cos, sin = cos.bfloat16(), sin.bfloat16() # keep them in bfloat16
+
+        # --- FIX: BFloat16 incompatibility with DirectML ---
+        # Force float32 for RoPE cache on non-CUDA devices for stability
+        # On CUDA we keep bfloat16 for speed
+        if device.type == "cuda":
+            cos, sin = cos.bfloat16(), sin.bfloat16()
+        else:
+            # dml / cpu: keep float32. We will cast to input type in forward()
+            pass
+
         cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
         return cos, sin
 
@@ -228,7 +248,9 @@ class GPT(nn.Module):
             dict(params=embedding_params, lr=embedding_lr * dmodel_lr_scale),
         ]
         adamw_kwargs = dict(betas=(0.8, 0.95), eps=1e-10, weight_decay=weight_decay)
-        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=True)
+        # --- FIX: DirectML 不支持 fused AdamW，强制关闭 ---
+        use_fused = (self.get_device().type == "cuda")
+        AdamWFactory = DistAdamW if ddp else partial(torch.optim.AdamW, fused=use_fused)
         adamw_optimizer = AdamWFactory(adam_groups, **adamw_kwargs)
         # Create the Muon optimizer for the linear layers
         muon_kwargs = dict(lr=matrix_lr, momentum=0.95)
@@ -247,7 +269,10 @@ class GPT(nn.Module):
         # Grab the rotary embeddings for the current sequence length (they are of shape (1, seq_len, 1, head_dim/2))
         assert T <= self.cos.size(1), f"Sequence length grew beyond the rotary embeddings cache: {T} > {self.cos.size(1)}"
         assert idx.device == self.cos.device, f"Rotary embeddings and idx are on different devices: {idx.device} != {self.cos.device}"
-        assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+
+        # --- FIX: Removed rigid assertion for bfloat16 to allow float32/float16 on DirectML ---
+        # assert self.cos.dtype == torch.bfloat16, "Rotary embeddings must be in bfloat16"
+
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
         cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length

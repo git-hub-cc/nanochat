@@ -8,14 +8,19 @@ dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
     "files-to-prompt>=0.6",
+    "pandas>=2.0.0",
     "psutil>=7.1.0",
+    "pyarrow>=15.0.0",
     "regex>=2025.9.1",
     "setuptools>=80.9.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.8.0",
+    # --- 修改点：修正 torch 版本并添加 DirectML ---
+    "torch>=2.0.0",
+    "torch-directml",
+    # -------------------------------------------
     "uvicorn>=0.36.0",
-    "wandb>=0.21.3",
+    "wandb>=0.21.3"
 ]
 
 [build-system]
@@ -43,35 +48,24 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-# target torch to cuda 12.8 or CPU
-[tool.uv.sources]
-torch = [  
-    { index = "pytorch-cpu", extra = "cpu" },  
-    { index = "pytorch-cu128", extra = "gpu" },  
+# --- 可选优化：强制下载 CPU 版本的 Torch ---
+# DirectML 不需要 Nvidia CUDA 版本的 Torch，使用 CPU 版本可以节省约 2GB 空间。
+# 如果下载太慢或体积太大，可以取消注释以下两段配置：
+
+# [tool.uv.sources]
+# torch = [
+#   { index = "pytorch-cpu" },
+# ]
+#
+# [[tool.uv.index]]
+# name = "pytorch-cpu"
+# url = "https://download.pytorch.org/whl/cpu"
+# explicit = true
+
+[project.optional-dependencies]
+cpu = [
+    "torch>=2.0.0",
 ]
-
-[[tool.uv.index]]  
-name = "pytorch-cpu"  
-url = "https://download.pytorch.org/whl/cpu"  
-explicit = true  
-  
-[[tool.uv.index]]  
-name = "pytorch-cu128"  
-url = "https://download.pytorch.org/whl/cu128"  
-explicit = true
-
-[project.optional-dependencies]  
-cpu = [  
-    "torch>=2.8.0",  
-]  
-gpu = [  
-    "torch>=2.8.0",  
-]  
-  
-[tool.uv]  
-conflicts = [  
-    [  
-        { extra = "cpu" },  
-        { extra = "gpu" },  
-    ],  
-]  
+gpu = [
+    "torch>=2.0.0",
+]

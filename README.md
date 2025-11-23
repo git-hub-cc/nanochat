@@ -221,3 +221,11 @@ If you find nanochat helpful in your research cite simply as:
 ## License
 
 MIT
+
+1. **数据准备**：确保 `C:\Users\wyswydx\IdeaProjects\Blog\blog\md` 目录下有你的 Markdown 语料。
+2. **安装环境**：
+    *   运行 `uv sync --extra cpu` (或者如果你已经配好了 AMD torch 环境，跳过此步)。
+    *   确保安装了 Rust 编译器 (`rustc`) 用于编译 `rustbpe`。
+3. **开始训练**：
+    *   运行 `uv run python -m scripts.tok_train` 生成针对你语料的分词器。
+    *   运行 `uv run python -m scripts.base_train` 开始训练模型。

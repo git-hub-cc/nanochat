@@ -6,7 +6,7 @@ import torch
 from torch import Tensor
 import torch.distributed as dist
 
-@torch.compile
+# @torch.compile
 def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
@@ -19,7 +19,10 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     """
     assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
     a, b, c = (3.4445, -4.7750,  2.0315)
-    X = G.bfloat16()
+    # --- FIX: DirectML 不支持 BFloat16，强制使用 Float32 ---
+    # X = G.bfloat16()
+    X = G.float()
+
     if G.size(-2) > G.size(-1):
         X = X.mT
 

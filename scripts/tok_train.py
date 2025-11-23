@@ -8,14 +8,17 @@ import argparse
 import torch
 from nanochat.tokenizer import RustBPETokenizer
 from nanochat.common import get_base_dir
+# 导入修改后的 dataset 模块，它会自动处理本地 MD 文件
 from nanochat.dataset import parquets_iter_batched
 
 # -----------------------------------------------------------------------------
 # Parse command line arguments
 
 parser = argparse.ArgumentParser(description='Train a BPE tokenizer')
-parser.add_argument('--max_chars', type=int, default=10_000_000_000, help='Maximum characters to train on (default: 10B)')
-parser.add_argument('--doc_cap', type=int, default=10_000, help='Maximum characters per document (default: 10,000)')
+# 修改默认值适配本地小规模数据
+parser.add_argument('--max_chars', type=int, default=1_000_000_000, help='Maximum characters to train on')
+# 增大文档截断长度，防止长博客文章被切断
+parser.add_argument('--doc_cap', type=int, default=100_000, help='Maximum characters per document')
 parser.add_argument('--vocab_size', type=int, default=65536, help='Vocabulary size (default: 65536 = 2^16)')
 args = parser.parse_args()
 print(f"max_chars: {args.max_chars:,}")
@@ -32,6 +35,7 @@ def text_iterator():
     3) Break when we've seen args.max_chars characters
     """
     nchars = 0
+    # 这里会调用修改后的 dataset.py，自动读取转换后的本地 parquet
     for batch in parquets_iter_batched(split="train"):
         for doc in batch:
             doc_text = doc
@@ -45,6 +49,7 @@ text_iter = text_iterator()
 
 # -----------------------------------------------------------------------------
 # Train the tokenizer
+print("Starting tokenizer training on local data...")
 t0 = time.time()
 tokenizer = RustBPETokenizer.train_from_iterator(text_iter, args.vocab_size)
 t1 = time.time()

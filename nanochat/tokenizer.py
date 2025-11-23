@@ -394,5 +394,9 @@ def get_token_bytes(device="cpu"):
     token_bytes_path = os.path.join(tokenizer_dir, "token_bytes.pt")
     assert os.path.exists(token_bytes_path), f"Token bytes not found at {token_bytes_path}? It gets written by tok_train.py"
     with open(token_bytes_path, "rb") as f:
-        token_bytes = torch.load(f, map_location=device)
+        # --- FIX: DirectML map_location bug workaround ---
+        # Load to CPU first, then move to device
+        token_bytes = torch.load(f, map_location="cpu")
+        if device != "cpu" and device != torch.device("cpu"):
+            token_bytes = token_bytes.to(device)
     return token_bytes
