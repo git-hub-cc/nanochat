@@ -275,7 +275,8 @@ class GPT(nn.Module):
 
         # if kv cache exists, we need to offset the rotary embeddings to the current position in the cache
         T0 = 0 if kv_cache is None else kv_cache.get_pos()
-        cos_sin = self.cos[:, T0:T0+T], self.sin[:, T0:T0+T] # truncate cache to current sequence length
+        # --- FIX: Add .clone() to avoid "Cannot set version_counter for inference tensor" on DirectML ---
+        cos_sin = self.cos[:, T0:T0+T].clone(), self.sin[:, T0:T0+T].clone() # truncate cache to current sequence length
 
         # Forward the trunk of the Transformer
         x = self.transformer.wte(idx)

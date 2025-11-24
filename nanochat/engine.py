@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from collections import deque
 from nanochat.common import compute_init, autodetect_device_type
 from nanochat.checkpoint_manager import load_model
-from contextlib import nullcontext 
+from contextlib import nullcontext
 
 # -----------------------------------------------------------------------------
 # Calculator tool helpers
@@ -66,8 +66,8 @@ def use_calculator(expr):
 
     # Disallow dangerous patterns
     dangerous_patterns = ['__', 'import', 'exec', 'eval', 'compile', 'open', 'file',
-                         'input', 'raw_input', 'globals', 'locals', 'vars', 'dir',
-                         'getattr', 'setattr', 'delattr', 'hasattr']
+                          'input', 'raw_input', 'globals', 'locals', 'vars', 'dir',
+                          'getattr', 'setattr', 'delattr', 'hasattr']
     expr_lower = expr.lower()
     if any(pattern in expr_lower for pattern in dangerous_patterns):
         return None
@@ -155,7 +155,8 @@ class KVCache:
 
 
 # -----------------------------------------------------------------------------
-@torch.inference_mode()
+# --- FIX: Replaced @torch.inference_mode() with @torch.no_grad() for DirectML compatibility ---
+@torch.no_grad()
 def sample_next_token(logits, rng, temperature=1.0, top_k=None):
     """Sample a single next token from given logits of shape (B, vocab_size). Returns (B, 1)."""
     assert temperature >= 0.0, "temperature must be non-negative"
@@ -190,7 +191,8 @@ class Engine:
         self.model = model
         self.tokenizer = tokenizer # needed for tool use
 
-    @torch.inference_mode()
+    # --- FIX: Replaced @torch.inference_mode() with @torch.no_grad() for DirectML compatibility ---
+    @torch.no_grad()
     def generate(self, tokens, num_samples=1, max_tokens=None, temperature=1.0, top_k=None, seed=42):
         """Same as generate, but does single prefill and then clones the KV cache."""
         assert isinstance(tokens, list) and isinstance(tokens[0], int), "expecting list of ints"

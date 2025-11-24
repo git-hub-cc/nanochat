@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from contextlib import nullcontext
+import copy
 
 import wandb
 import torch
@@ -36,7 +37,8 @@ depth = 10
 max_seq_len = 512
 
 # Training horizon
-num_iterations = 1000
+# --- 修改点：将迭代次数从 1000 改为 20 以进行快速验证 ---
+num_iterations = 20
 target_flops = -1.0
 target_param_data_ratio = 20
 
@@ -56,13 +58,17 @@ warmup_ratio = 0.0
 warmdown_ratio = 0.2
 final_lr_frac = 0.0
 resume_from_step = -1
+
 # Evaluation
-eval_every = 100
+# --- 修改点：调整评估间隔以适应 20 次迭代 ---
+eval_every = 10
 eval_tokens = 20*1024*4
-core_metric_every = 1000
+core_metric_every = 20 # 在最后一步进行评估
 core_metric_max_per_task = 200
-sample_every = 200
-save_every = 500
+sample_every = 10
+save_every = 20 # 在最后一步进行保存
+# -----------------------------------------------
+
 # Output
 model_tag = ""
 
@@ -291,6 +297,13 @@ while True:
     # Sampling
     if master_process and (last_step or (step > 0 and step % sample_every == 0)):
         model.eval()
+
+        # --- FIX: Temporarily switch to float32 for stable sampling on DirectML ---
+        is_half_precision = False
+        if device_type == "dml" and orig_model.lm_head.weight.dtype == torch.float16:
+            is_half_precision = True
+            orig_model.float() # Switch to float32 for stable sampling
+
         prompts = [
             "The capital of China is",
             "AI is",
@@ -300,10 +313,16 @@ while True:
         print0("\n--- Sampling ---")
         for prompt in prompts:
             tokens = tokenizer(prompt, prepend="<|bos|>")
+            # autocast_ctx is nullcontext() on DML, this has no effect, which is fine
             with autocast_ctx:
                 sample, _ = engine.generate_batch(tokens, num_samples=1, max_tokens=16, temperature=0.8)
             print0(f"> {prompt} -> {tokenizer.decode(sample[0])}")
         print0("----------------\n")
+
+        # --- FIX: Revert model back to original precision for training ---
+        if is_half_precision:
+            orig_model.half() # Switch back to float16 for training efficiency
+
         model.train()
 
     # Checkpoint
@@ -347,7 +366,7 @@ while True:
     for micro_step in range(grad_accum_steps):
         with autocast_ctx:
             loss = model(x, y)
-        train_loss = loss.detach()
+        train_loss = loss.detach() # for logging
         loss = loss / grad_accum_steps
         loss.backward()
         x, y, dataloader_state_dict = next(train_loader)
